@@ -1,12 +1,14 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { View, Text, TextInput, Button, FlatList, TouchableOpacity, StyleSheet, Alert, Image } from 'react-native';
+import { Buffer } from 'buffer';
+import React, { useContext, useEffect, useState } from 'react';
+import { Alert, Button, FlatList, Image, PermissionsAndroid, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { BleManager } from 'react-native-ble-plx';
 import { SharedYoutubeLinkContext } from './_layout';
 
-const MOCK_DEVICES = [
-  { id: '1', name: 'Piano-Bluetooth-01' },
-  { id: '2', name: 'Speaker-02' },
-  { id: '3', name: 'MyHeadset' },
-];
+const UART_SERVICE = '6E400001-B5A3-F393-E0A9-E50E24DCCA9E';
+const RX_CHARACTERISTIC = '6E400002-B5A3-F393-E0A9-E50E24DCCA9E';
+// const TX_CHARACTERISTIC = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E';
+
+const manager = new BleManager();
 
 // 유튜브 링크에서 영상 ID 추출 함수
 function extractYoutubeId(url: string) {
@@ -16,10 +18,11 @@ function extractYoutubeId(url: string) {
 
 export default function BluetoothScreen() {
   const { link: sharedLink, setLink: setSharedLink } = useContext(SharedYoutubeLinkContext);
-  const [devices, setDevices] = useState(MOCK_DEVICES);
-  const [selectedDevice, setSelectedDevice] = useState<{id: string, name: string} | null>(null);
+  const [devices, setDevices] = useState<any[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<any | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [status, setStatus] = useState('');
+  const [scanning, setScanning] = useState(false);
 
   // 썸네일 URL 생성
   const videoId = extractYoutubeId(sharedLink ?? '');
@@ -30,29 +33,70 @@ export default function BluetoothScreen() {
     console.log('sharedLink 변경 감지:', sharedLink);
   }, [sharedLink]);
 
-  // 입력란이 바뀌면 Context도 동기화
-  const handleInputChange = (text: string) => {
-    setSharedLink(text);
+  // 블루투스 권한 요청 (Android)
+  const requestPermissions = async () => {
+    if (Platform.OS === 'android') {
+      await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+      ]);
+    }
   };
 
-  // 블루투스 기기 검색(모킹)
-  const scanDevices = () => {
-    setStatus('기기 검색 완료!');
-    setDevices(MOCK_DEVICES); // 실제 구현시 BLE 스캔 결과로 대체
+  // BLE 기기 스캔
+  const scanDevices = async () => {
+    setStatus('기기 검색 중...');
+    setScanning(true);
+    setDevices([]);
+    await requestPermissions();
+    const discovered: any[] = [];
+    manager.startDeviceScan([UART_SERVICE], null, (error, device) => {
+      if (error) {
+        setStatus('스캔 에러: ' + error.message);
+        setScanning(false);
+        return;
+      }
+      if (device && device.name && !discovered.find(d => d.id === device.id)) {
+        discovered.push(device);
+        setDevices([...discovered]);
+      }
+    });
+    // 10초 후 스캔 종료
+    setTimeout(() => {
+      manager.stopDeviceScan();
+      setScanning(false);
+      setStatus('기기 검색 완료!');
+    }, 10000);
   };
 
-  // 링크 전송(모킹)
-  const sendLink = () => {
+  // 링크 전송
+  const sendLink = async () => {
     if (!sharedLink || !selectedDevice) {
       Alert.alert('알림', '유튜브 링크와 기기를 모두 선택하세요.');
       return;
     }
     setIsSending(true);
     setStatus('링크 전송 중...');
-    setTimeout(() => {
-      setIsSending(false);
+    try {
+      const device = await manager.connectToDevice(selectedDevice.id);
+      await device.discoverAllServicesAndCharacteristics();
+      const base64Link = Buffer.from(sharedLink, 'utf-8').toString('base64');
+      await device.writeCharacteristicWithResponseForService(
+        UART_SERVICE,
+        RX_CHARACTERISTIC,
+        base64Link
+      );
       setStatus('링크 전송 성공!');
-    }, 1500);
+    } catch (e: any) {
+      setStatus('전송 실패: ' + e.message);
+    }
+    setIsSending(false);
+  };
+
+  // 입력란이 바뀌면 Context도 동기화
+  const handleInputChange = (text: string) => {
+    setSharedLink(text);
   };
 
   return (
@@ -73,7 +117,7 @@ export default function BluetoothScreen() {
         autoCapitalize="none"
         autoCorrect={false}
       />
-      <Button title="블루투스 기기 검색" onPress={scanDevices} />
+      <Button title={scanning ? '기기 검색 중...' : '블루투스 기기 검색'} onPress={scanDevices} disabled={scanning} />
       <Text style={styles.subtitle}>기기 선택</Text>
       <FlatList
         data={devices}
@@ -83,7 +127,7 @@ export default function BluetoothScreen() {
             style={[styles.device, selectedDevice?.id === item.id && styles.selectedDevice]}
             onPress={() => setSelectedDevice(item)}
           >
-            <Text>{item.name}</Text>
+            <Text>{item.name || item.id}</Text>
           </TouchableOpacity>
         )}
         style={{ maxHeight: 120 }}

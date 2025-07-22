@@ -3,6 +3,7 @@ import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build
 import android.os.Bundle
+import android.content.Intent
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -10,14 +11,8 @@ import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnable
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 
 import expo.modules.ReactActivityDelegateWrapper
-import android.content.Intent
-import com.facebook.react.modules.core.DeviceEventManagerModule
 
 class MainActivity : ReactActivity() {
-  companion object {
-    var sharedYoutubeLink: String? = null
-  }
-
   override fun onCreate(savedInstanceState: Bundle?) {
     // Set the theme to AppTheme BEFORE onCreate to support
     // coloring the background, status bar, and navigation bar.
@@ -30,18 +25,18 @@ class MainActivity : ReactActivity() {
     handleShareIntent(intent)
   }
 
-  override fun onNewIntent(intent: Intent?) {
+  override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
+    setIntent(intent)
     handleShareIntent(intent)
   }
 
   private fun handleShareIntent(intent: Intent?) {
     if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
       val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
-      if (sharedText != null) {
-        sharedYoutubeLink = sharedText
-        android.util.Log.d("SharedLink", "sharedYoutubeLink set: $sharedText")
-      }
+      // SharedLinkModule에 전달 (예: Companion object 등으로 static 변수에 저장)
+      SharedLinkModule.sharedYoutubeLink = sharedText
+      SharedLinkModule.sendLinkToJS(sharedText) // ★ 이 줄 추가!
     }
   }
 
